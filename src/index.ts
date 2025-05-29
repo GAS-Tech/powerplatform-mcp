@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/http.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.ts.js";
 import http from 'http';
 import { z } from "zod";
 import { PowerPlatformService, PowerPlatformConfig } from "./PowerPlatformService.js";
