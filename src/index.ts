@@ -796,49 +796,68 @@ server.tool(
   }
 );
 
-async function startServer() {
-  // --- EXPRESS APP AND SESSION MANAGEMENT ---
-  const app = express();
-  app.use(express.json());
-  const transports: { /* ... */ } = {};
+const app = express();
+app.use(express.json());
 
-  // It's often better to define `server` (your McpServer instance) globally
-  // so it's accessible here if not already.
-  // Ensure your global `server` (McpServer instance) is accessible to the route handlers.
-
-  app.post('/mcp', async (req, res) => {
-    // ... your existing POST handler logic using the global `server` instance ...
-    // The `await server.connect(transport)` happens here for new sessions.
-  });
-
-  app.get('/mcp', async (req, res) => { /* ... using global `server` implicitly ... */ });
-  app.delete('/mcp', async (req, res) => { /* ... using global `server` implicitly ... */ });
-
-  // --- START THE SERVER ---
-  const port = process.env.PORT || 3001;
-  // app.listen is not promise-based, but wrapping allows handling its errors or async setup before it.
-  await new Promise<void>((resolve, reject) => {
-    const httpServer = app.listen(port, () => {
-      console.log(`PowerPlatform MCP Server (with session management) listening on port ${port}, at /mcp endpoint`);
-      resolve();
+app.post('/mcp', async (req: Request, res: Response) => {
+  // In stateless mode, create a new instance of transport and server for each request
+  // to ensure complete isolation. A single instance would cause request ID collisions
+  // when multiple clients connect concurrently.
+  
+  try {
+    const server = getServer(); 
+    const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
     });
-    httpServer.on('error', (err) => {
-      reject(err); // For app.listen specific errors like EADDRINUSE
+    res.on('close', () => {
+      console.log('Request closed');
+      transport.close();
+      server.close();
     });
-  });
-}
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (error) {
+    console.error('Error handling MCP request:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: 'Internal server error',
+        },
+        id: null,
+      });
+    }
+  }
+});
 
-// --- STARTUP AND GLOBAL ERROR HANDLING ---
-if (require.main === module) { // Ensures startServer() is called only when script is run directly
-  startServer().catch((error) => {
-    console.error("Failed to start server:", error);
-    process.exit(1);
-  });
-}
+app.get('/mcp', async (req: Request, res: Response) => {
+  console.log('Received GET MCP request');
+  res.writeHead(405).end(JSON.stringify({
+    jsonrpc: "2.0",
+    error: {
+      code: -32000,
+      message: "Method not allowed."
+    },
+    id: null
+  }));
+});
 
-// --- CLEANUP ---
-process.on('SIGINT', () => {
-  console.log('SIGINT signal received: closing HTTP server');
-  // Consider any cleanup needed for transports or the McpServer
-  process.exit(0);
+app.delete('/mcp', async (req: Request, res: Response) => {
+  console.log('Received DELETE MCP request');
+  res.writeHead(405).end(JSON.stringify({
+    jsonrpc: "2.0",
+    error: {
+      code: -32000,
+      message: "Method not allowed."
+    },
+    id: null
+  }));
+});
+
+
+// Start the server
+const PORT = 3000;
+app.listen(PORT, () => {
+  console.log(`MCP Stateless Streamable HTTP Server listening on port ${PORT}`);
 });
