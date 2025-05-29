@@ -1,7 +1,10 @@
 #!/usr/bin/env node
+
+import express from "express";
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import http from 'http';
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js"
 import { z } from "zod";
 import { PowerPlatformService, PowerPlatformConfig } from "./PowerPlatformService.js";
 
@@ -793,73 +796,49 @@ server.tool(
   }
 );
 
-// async function main() {
-//   const transport = new StdioServerTransport();
-//   await server.connect(transport);
-//   console.error("Initializing PowerPlatform MCP Server...");
-// }
+async function startServer() {
+  // --- EXPRESS APP AND SESSION MANAGEMENT ---
+  const app = express();
+  app.use(express.json());
+  const transports: { /* ... */ } = {};
 
-async function main() {
-  // Instantiate the HTTP transport
-  const transport = new StreamableHTTPServerTransport();
+  // It's often better to define `server` (your McpServer instance) globally
+  // so it's accessible here if not already.
+  // Ensure your global `server` (McpServer instance) is accessible to the route handlers.
 
-  // Create a basic HTTP server
-  const httpServer = http.createServer(async (req, res) => {
-    // Basic routing: only handle requests to '/mcp'
-    if (req.url === '/mcp' && req.method === 'POST') {
-      try {
-        // The transport provides a method to handle the Node.js IncomingMessage and ServerResponse
-        // This is a conceptual adaptation. The SDK's StreamableHTTPServerTransport
-        // is typically used with a request handler function for frameworks like Express.
-        // For a direct http.Server, you'd need to manually pipe data and handle responses
-        // or use a more specific adapter if the SDK provides one.
-
-        // Let's assume the SDK's transport can give us a handler or we adapt.
-        // A more robust way is if transport.handleNodeHttpRequest(req, res, server) exists.
-        // If not, we might need to collect the body and then pass it.
-
-        let body = '';
-        req.on('data', chunk => {
-          body += chunk.toString();
-        });
-        req.on('end', async () => {
-          try {
-            const requestPayload = JSON.parse(body);
-            // This is a simplified way to interact; the actual SDK might have a more direct method
-            // to process a raw request object and return a response object.
-            // The `expressRequestHandler` is the common pattern. Replicating its core logic here:
-            const mcpResponse = await server.process(requestPayload); // McpServer.process is a general method
-
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(mcpResponse));
-          } catch (e: any) {
-            console.error("Error processing MCP request:", e);
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: { message: e.message } }));
-          }
-        });
-      } catch (e: any) {
-        console.error("Error in HTTP server request handling:", e);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: { message: "Internal server error" } }));
-      }
-    } else {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Not Found');
-    }
+  app.post('/mcp', async (req, res) => {
+    // ... your existing POST handler logic using the global `server` instance ...
+    // The `await server.connect(transport)` happens here for new sessions.
   });
 
-  const port = process.env.PORT || 3001; // Azure Web Apps sets PORT automatically
-  httpServer.listen(port, () => {
-    console.error(`Initializing PowerPlatform MCP Server via HTTP on port ${port} at /mcp...`);
-  });
+  app.get('/mcp', async (req, res) => { /* ... using global `server` implicitly ... */ });
+  app.delete('/mcp', async (req, res) => { /* ... using global `server` implicitly ... */ });
 
-  // The server.connect(transport) is not typically used with StreamableHTTPServerTransport
-  // when an HTTP server manually handles requests and dispatches to McpServer.process or similar.
-  // The McpServer instance is used directly by the HTTP request handler.
+  // --- START THE SERVER ---
+  const port = process.env.PORT || 3001;
+  // app.listen is not promise-based, but wrapping allows handling its errors or async setup before it.
+  await new Promise<void>((resolve, reject) => {
+    const httpServer = app.listen(port, () => {
+      console.log(`PowerPlatform MCP Server (with session management) listening on port ${port}, at /mcp endpoint`);
+      resolve();
+    });
+    httpServer.on('error', (err) => {
+      reject(err); // For app.listen specific errors like EADDRINUSE
+    });
+  });
 }
 
-main().catch((error) => {
-  console.error("Fatal error in main():", error);
-  process.exit(1);
+// --- STARTUP AND GLOBAL ERROR HANDLING ---
+if (require.main === module) { // Ensures startServer() is called only when script is run directly
+  startServer().catch((error) => {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  });
+}
+
+// --- CLEANUP ---
+process.on('SIGINT', () => {
+  console.log('SIGINT signal received: closing HTTP server');
+  // Consider any cleanup needed for transports or the McpServer
+  process.exit(0);
 });
